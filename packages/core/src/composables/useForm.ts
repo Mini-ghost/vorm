@@ -613,6 +613,7 @@ export function useForm<
     return {
       value: getFieldValue(name),
       attrs: getFieldAttrs(name),
+      validateField: () => validateField(toValue(name)),
       ...getFieldMeta(name),
     };
   };
