@@ -1,7 +1,7 @@
 import deepmerge from 'deepmerge';
 import isEqual from 'fast-deep-equal/es6';
 import { klona as deepClone } from 'klona/full';
-import { computed, onMounted, provide, reactive, ref } from 'vue';
+import { computed, onMounted, provide, reactive, ref, unref } from 'vue';
 
 import toValue from './toValue';
 import { FormContextKey } from './useFormContext';
@@ -49,6 +49,10 @@ interface FieldArrayRegistry {
   [field: string]: {
     reset: () => void;
   };
+}
+
+interface ValidateHandlerOptions {
+  onlyBlurred?: boolean;
 }
 
 export interface FormSubmitHelper<Values extends FormValues> {
@@ -269,7 +273,7 @@ export function useForm<
     });
 
     return validateTiming.value === 'blur'
-      ? runAllValidateHandler(state.values)
+      ? runAllValidateHandler(state.values, { onlyBlurred: true })
       : Promise.resolve();
   };
 
@@ -516,19 +520,55 @@ export function useForm<
     });
   };
 
-  const runAllValidateHandler = (values: Values = state.values) => {
+  /**
+   * Creates a new object of errors, but only with the errors of touched fields.
+   *
+   * @param errors The union of field and form errors
+   * @returns The field errors that have been touched
+   */
+  const getTouchedErrors = <
+    T extends FormErrors<Values>,
+    F extends FormTouched<Values>,
+  >(
+    errors: T,
+    touched: F,
+  ): Partial<T> => {
+    const result: any = {};
+
+    for (const key in errors) {
+      if (typeof touched[key] === 'object' && typeof errors[key] === 'object') {
+        result[key] = getTouchedErrors(
+          errors[key] as FormErrors<Values>,
+          touched[key] as FormTouched<Values>,
+        );
+      } else if (touched[key] === true && errors[key]) {
+        result[key] = errors[key];
+      }
+    }
+
+    return result;
+  };
+
+  const runAllValidateHandler = (
+    values: Values = state.values,
+    validateOptions?: ValidateHandlerOptions,
+  ) => {
     dispatch({ type: ACTION_TYPE.SET_ISVALIDATING, payload: true });
     return Promise.all([
       runFieldValidateHandler(values),
       options.validate ? runValidateHandler(values) : {},
     ])
       .then(([fieldErrors, validateErrors]) => {
-        const errors = deepmerge.all<FormErrors<Values>>(
+        const baseErrors = deepmerge.all<FormErrors<Values>>(
           [fieldErrors, validateErrors],
           {
             arrayMerge,
           },
         );
+
+        const errors = validateOptions?.onlyBlurred
+          ? getTouchedErrors(baseErrors, unref(state.touched))
+          : baseErrors;
 
         setErrors(errors);
 
